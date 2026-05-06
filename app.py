@@ -4,8 +4,8 @@ from datetime import date
 import calendar
 import os
 
-# Имя файла - меняем на v3, чтобы начать с чистого листа без старых ошибок типов
-DB_FILE = 'students_v3.csv'
+# Новая версия файла, чтобы избежать конфликтов со старыми колонками
+DB_FILE = 'students_v4.csv'
 
 def get_end_of_month(current_date):
     _, last_day = calendar.monthrange(current_date.year, current_date.month)
@@ -18,109 +18,119 @@ def load_data():
             'Дата рождения', 
             'ФИО родителя', 
             'Телефон', 
-            'Оплачено до', 
-            'Посещения'
+            'Оплачено до'
         ])
         df.to_csv(DB_FILE, index=False)
     
     df = pd.read_csv(DB_FILE)
-    df['Посещения'] = df['Посещения'].fillna('') 
-    # Принудительно делаем колонку с оплатой текстовой, чтобы избежать TypeError
+    # Гарантируем, что даты — это строки для стабильности
     df['Оплачено до'] = df['Оплачено до'].astype(str)
     return df
 
 def save_data(df):
     df.to_csv(DB_FILE, index=False)
 
-st.set_page_config(page_title="Трекер тренера", page_icon="🥋", layout="wide")
-st.title("🥋 Журнал тренера: Посещаемость и Оплата")
+st.set_page_config(page_title="Менеджер Группы", page_icon="🥋", layout="wide")
+st.title("🥋 Управление учениками и Оплатой")
 
 df = load_data()
 
-tab1, tab2, tab3 = st.tabs(["📋 Посещаемость", "➕ Ученики и Оплата", "📊 База данных"])
+tab1, tab2 = st.tabs(["➕ Редактирование и Оплата", "📊 База учеников"])
 
-# --- ВКЛАДКА 1: ПОСЕЩАЕМОСТЬ ---
+# --- ВКЛАДКА 1: УПРАВЛЕНИЕ ---
 with tab1:
-    st.header("Отметка посещаемости")
-    today = st.date_input("Дата тренировки", date.today())
-
-    if df.empty:
-        st.warning("База пуста.")
-    else:
-        with st.form("attendance_form"):
-            present_students = []
-            for index, row in df.iterrows():
-                # Превращаем текст из базы обратно в дату для сравнения
-                paid_until = pd.to_datetime(row['Оплачено до']).date()
-                if today > paid_until:
-                    warning = " 🔴 (ДОЛГ!)"
-                else:
-                    warning = f" 🟢 (до {paid_until.strftime('%d.%m')})"
-                    
-                is_present = st.checkbox(f"{row['Имя ученика']}{warning}", key=f"check_{index}")
-                if is_present:
-                    present_students.append(index)
-            
-            if st.form_submit_button("Сохранить посещаемость"):
-                date_str = today.strftime('%d.%m')
-                for idx in present_students:
-                    current = str(df.at[idx, 'Посещения'])
-                    df.at[idx, 'Посещения'] = date_str if current == '' else current + f", {date_str}"
-                save_data(df)
-                st.success("Сохранено!")
-                st.rerun()
-
-# --- ВКЛАДКА 2: УПРАВЛЕНИЕ ---
-with tab2:
-    st.header("Управление")
     col1, col2 = st.columns(2)
     
     with col1:
-        st.subheader("Новый ученик")
-        with st.form("add_form"):
-            new_name = st.text_input("ФИО ученика")
-            new_dob = st.date_input("Дата рождения", value=date(2015, 1, 1))
-            new_parent = st.text_input("ФИО родителя")
-            new_phone = st.text_input("Телефон")
-            new_paid = st.date_input("Оплачено до", value=get_end_of_month(date.today()))
+        st.subheader("🆕 Добавить ученика")
+        with st.form("add_form", clear_on_submit=True):
+            name = st.text_input("ФИО ученика (полностью)")
+            dob = st.date_input("Дата рождения", value=date(2015, 1, 1))
+            parent = st.text_input("Инициалы/ФИО родителя")
+            phone = st.text_input("Номер телефона")
+            paid_until = st.date_input("Оплачено до", value=get_end_of_month(date.today()))
             
-            if st.form_submit_button("Добавить"):
-                if new_name:
-                    new_student = pd.DataFrame({
-                        'Имя ученика': [new_name],
-                        # Сохраняем даты как текст (строки)
-                        'Дата рождения': [new_dob.isoformat()],
-                        'ФИО родителя': [new_parent],
-                        'Телефон': [new_phone],
-                        'Оплачено до': [new_paid.isoformat()],
-                        'Посещения': ['']
+            if st.form_submit_button("Создать карточку"):
+                name = name.strip()
+                if not name:
+                    st.error("Ошибка: Имя ученика не может быть пустым!")
+                elif name in df['Имя ученика'].values:
+                    st.error(f"Ошибка: Ученик с именем '{name}' уже есть в базе!")
+                else:
+                    new_entry = pd.DataFrame({
+                        'Имя ученика': [name],
+                        'Дата рождения': [dob.isoformat()],
+                        'ФИО родителя': [parent.strip()],
+                        'Телефон': [phone.strip()],
+                        'Оплачено до': [paid_until.isoformat()]
                     })
-                    df = pd.concat([df, new_student], ignore_index=True)
+                    df = pd.concat([df, new_entry], ignore_index=True)
                     save_data(df)
-                    st.success("Добавлен!")
+                    st.success(f"Ученик {name} добавлен!")
                     st.rerun()
 
     with col2:
-        st.subheader("Оплата")
+        st.subheader("💰 Прием оплаты")
         if not df.empty:
-            with st.form("renew_form"):
-                student = st.selectbox("Ученик", df['Имя ученика'])
-                new_date_paid = st.date_input("Продлить до", value=get_end_of_month(date.today()))
-                clear_v = st.checkbox("Очистить посещения")
+            with st.form("payment_form"):
+                # Сортируем список имен по алфавиту для удобства поиска
+                student_list = sorted(df['Имя ученика'].tolist())
+                selected_student = st.selectbox("Выберите ученика", student_list)
                 
-                if st.form_submit_button("Сохранить оплату"):
-                    idx = df.index[df['Имя ученика'] == student].tolist()[0]
-                    # ВАЖНО: сохраняем дату как строку через .isoformat()
-                    df.at[idx, 'Оплачено до'] = new_date_paid.isoformat()
-                    if clear_v:
-                        df.at[idx, 'Посещения'] = ''
+                new_expiry = st.date_input("Продлить абонемент до", value=get_end_of_month(date.today()))
+                
+                if st.form_submit_button("Подтвердить оплату"):
+                    idx = df.index[df['Имя ученика'] == selected_student].tolist()[0]
+                    df.at[idx, 'Оплачено до'] = new_expiry.isoformat()
                     save_data(df)
-                    st.success("Оплата принята!")
+                    st.success(f"Оплата для {selected_student} сохранена!")
                     st.rerun()
+                    
+            st.divider()
+            st.subheader("🗑 Удаление")
+            student_to_del = st.selectbox("Удалить ученика из базы", ["-- выберите --"] + student_list)
+            if st.button("❌ Удалить безвозвратно", type="secondary"):
+                if student_to_del != "-- выберите --":
+                    df = df[df['Имя ученика'] != student_to_del]
+                    save_data(df)
+                    st.warning(f"Ученик {student_to_del} удален.")
+                    st.rerun()
+        else:
+            st.info("База пока пуста. Добавьте первого ученика слева.")
 
-# --- ВКЛАДКА 3: БАЗА ---
-with tab3:
-    st.header("База данных")
+# --- ВКЛАДКА 2: БАЗА ДАННЫХ ---
+with tab2:
+    st.header("Список группы")
+    
     if not df.empty:
-        st.dataframe(df, use_container_width=True)
-        st.download_button("Скачать CSV", df.to_csv(index=False).encode('utf-8'), "base.csv")
+        # Панель инструментов над таблицей
+        search_query = st.text_input("🔍 Быстрый поиск по имени", "").lower()
+        
+        # Фильтруем данные по поиску
+        filtered_df = df[df['Имя ученика'].str.lower().contains(search_query)]
+        
+        # Функция для раскраски строк
+        def style_rows(row):
+            expiry = pd.to_datetime(row['Оплачено до']).date()
+            if expiry < date.today():
+                return ['background-color: #ffcccc'] * len(row) # Красный - долг
+            return [''] * len(row)
+
+        # Вывод таблицы
+        st.dataframe(
+            filtered_df.style.apply(style_rows, axis=1),
+            use_container_width=True,
+            column_config={
+                "Телефон": st.column_config.TextColumn("📞 Телефон"),
+                "Оплачено до": st.column_config.DateColumn("📅 Оплачено до"),
+                "Дата рождения": st.column_config.DateColumn("🎂 ДР")
+            }
+        )
+        
+        st.write(f"**Всего в группе:** {len(df)} чел. | **Найдено:** {len(filtered_df)}")
+        
+        # Кнопка экспорта
+        csv = df.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Скачать всю базу в Excel (CSV)", csv, "base_coaching.csv", "text/csv")
+    else:
+        st.info("Здесь будет отображаться список вашей группы после добавления учеников.")

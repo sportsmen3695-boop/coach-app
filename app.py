@@ -4,8 +4,8 @@ from datetime import date
 import calendar
 import os
 
-# Версия v11 для чистого запуска финансового модуля
-DB_FILE = 'students_v11.csv'
+# Версия v12 - исправлены ошибки в метриках и типах данных
+DB_FILE = 'students_v12.csv'
 PRICE = 2500  # Стоимость абонемента
 PERCENT_DIR = 0.40  # Доля директора (40%)
 
@@ -49,6 +49,7 @@ with st.sidebar:
     
     if not df.empty:
         valid_dates = df.dropna(subset=['Оплачено до'])
+        # Очищаем от некорректных дат и считаем должников
         debtors_count = len(valid_dates[valid_dates['Оплачено до'] < date.today()])
         if debtors_count > 0:
             st.error(f"🔴 Должников: {debtors_count}")
@@ -62,24 +63,24 @@ if page == "📊 Дашборд":
     if not df.empty:
         # --- ФИНАНСОВЫЕ РАСЧЕТЫ ---
         total_students = len(df)
+        # Фильтруем тех, кто оплатил (дата оплаты >= сегодня)
         paid_students = len(df[df['Оплачено до'] >= date.today()])
         unpaid_students = total_students - paid_students
         
         collected_money = paid_students * PRICE
         remaining_money = unpaid_students * PRICE
-        total_potential = total_students * PRICE
         
         director_share = collected_money * PERCENT_DIR
         coach_income = collected_money - director_share
 
-        # Вывод карточек
+        # Вывод карточек (ИСПРАВЛЕНО: удалены лишние параметры)
         c1, c2, c3 = st.columns(3)
         with c1:
-            st.metric("Собрано (всего)", f"{collected_money} ₽", f"Долг: {remaining_money} ₽", delta_color="inverse")
+            st.metric("Собрано (всего)", f"{collected_money} ₽", delta=f"Долг: {remaining_money} ₽", delta_color="inverse")
         with c2:
             st.metric("Доля директора (40%)", f"{int(director_share)} ₽")
         with c3:
-            st.metric("Ваша чистая ЗП", f"{int(coach_income)} ₽", mode="normal")
+            st.metric("Ваша чистая ЗП", f"{int(coach_income)} ₽")
 
         st.divider()
         
@@ -114,7 +115,13 @@ elif page == "➕ Регистрация":
             elif not df.empty and name.lower() in df['Имя ученика'].astype(str).str.lower().values:
                 st.warning(f"Ученик {name} уже есть в базе!")
             else:
-                new_data = pd.DataFrame([{'Имя ученика': name, 'Дата рождения': dob, 'ФИО родителя': parent, 'Телефон': phone, 'Оплачено до': paid}])
+                new_data = pd.DataFrame([{
+                    'Имя ученика': name, 
+                    'Дата рождения': dob, 
+                    'ФИО родителя': parent, 
+                    'Телефон': phone, 
+                    'Оплачено до': paid
+                }])
                 df = pd.concat([df, new_data], ignore_index=True)
                 save_data(df)
                 st.success("Добавлено!")

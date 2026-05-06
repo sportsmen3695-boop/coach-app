@@ -107,7 +107,7 @@ with tab2:
         search_query = st.text_input("🔍 Быстрый поиск по имени", "").lower()
         
         # Фильтруем данные по поиску
-        filtered_df = df[df['Имя ученика'].str.lower().contains(search_query)]
+        filtered_df = df[df['Имя ученика'].str.lower().str.contains(search_query, na=False)]
         
         # Функция для раскраски строк
         def style_rows(row):

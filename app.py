@@ -42,7 +42,7 @@ st.markdown("""
     .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
     [data-testid="stForm"] { border: none; background-color: #ffffff; padding: 20px; border-radius: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
     </style>
-    """, unsafe_all_white_space=True)
+    """, unsafe_allow_html=True)
 
 st.title("🥋 Система управления секцией")
 

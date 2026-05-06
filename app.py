@@ -5,7 +5,7 @@ import calendar
 import os
 
 # Имя файла для хранения базы данных
-DB_FILE = 'students.csv'
+DB_FILE = 'students_v2.csv'
 
 # Функция для вычисления последнего дня текущего месяца
 def get_end_of_month(current_date):

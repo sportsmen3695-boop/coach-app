@@ -4,10 +4,14 @@ from datetime import date
 import calendar
 import os
 
-# Версия v14 - Добавлен ручной импорт/экспорт для работы с телефона
-DB_FILE = 'students_v13.csv'
+# --- НАСТРОЙКИ ---
+# Убрали жесткую привязку к версии в названии, чтобы не плодить файлы
+DB_FILE = 'students_db.csv' 
 DEFAULT_PRICE = 2500
 PERCENT_DIR = 0.40
+
+# Ожидаемые колонки для проверки при восстановлении базы
+EXPECTED_COLUMNS = ['Имя ученика', 'Дата рождения', 'ФИО родителя', 'Телефон', 'Оплачено до', 'Сумма']
 
 def get_end_of_month(current_date):
     _, last_day = calendar.monthrange(current_date.year, current_date.month)
@@ -15,13 +19,16 @@ def get_end_of_month(current_date):
 
 def load_data():
     if not os.path.exists(DB_FILE):
-        df = pd.DataFrame(columns=['Имя ученика', 'Дата рождения', 'ФИО родителя', 'Телефон', 'Оплачено до', 'Сумма'])
+        df = pd.DataFrame(columns=EXPECTED_COLUMNS)
         df.to_csv(DB_FILE, index=False)
         return df
+    
     df = pd.read_csv(DB_FILE, dtype={'Телефон': str, 'ФИО родителя': str})
     if not df.empty:
+        # Безопасная конвертация дат
         df['Оплачено до'] = pd.to_datetime(df['Оплачено до'], errors='coerce').dt.date
         df['Дата рождения'] = pd.to_datetime(df['Дата рождения'], errors='coerce').dt.date
+        
         if 'Сумма' not in df.columns:
             df['Сумма'] = DEFAULT_PRICE
         df['Сумма'] = pd.to_numeric(df['Сумма'], errors='coerce').fillna(DEFAULT_PRICE).astype(int)
@@ -43,6 +50,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 df = load_data()
+today = date.today()
 
 # --- ПАНЕЛЬ ЗАДАЧ ---
 with st.sidebar:
@@ -59,71 +67,89 @@ with st.sidebar:
         st.download_button(
             label="📥 Скачать базу на телефон",
             data=csv,
-            file_name=f"students_backup_{date.today()}.csv",
+            file_name=f"students_backup_{today}.csv",
             mime="text/csv",
         )
     
-    # 2. Кнопка загрузки
+    # 2. Кнопка загрузки (с проверкой структуры!)
     uploaded_file = st.file_uploader("📤 Восстановить из файла", type="csv")
     if uploaded_file is not None:
         try:
             new_df = pd.read_csv(uploaded_file)
-            save_data(new_df)
-            st.success("База восстановлена!")
-            st.rerun()
-        except:
-            st.error("Ошибка в файле!")
+            # Проверка: есть ли нужные колонки в загруженном файле
+            if all(col in new_df.columns for col in EXPECTED_COLUMNS):
+                save_data(new_df)
+                st.success("База успешно восстановлена!")
+                st.rerun()
+            else:
+                st.error("❌ Ошибка: Неверный формат файла. Загрузите правильный бэкап.")
+        except Exception as e:
+            st.error(f"❌ Ошибка чтения файла: {e}")
     
     st.divider()
     
+    # Безопасный подсчет должников (учет пустых дат и просроченных)
     if not df.empty:
-        today = date.today()
-        debtors_count = len(df) - len(df[df['Оплачено до'] >= today])
+        today_dt = pd.to_datetime(today)
+        # Считаем тех, у кого дата меньше сегодняшней, плюс тех, у кого даты вообще нет (NaT)
+        debtors_count = len(df[pd.to_datetime(df['Оплачено до'], errors='coerce') < today_dt]) + df['Оплачено до'].isna().sum()
+        
         if debtors_count > 0:
             st.error(f"🔴 Должников: {debtors_count}")
         else:
             st.success("🟢 Все оплачено")
 
-# --- ЛОГИКА СТРАНИЦ (остается такой же) ---
+# --- ЛОГИКА СТРАНИЦ ---
 if page == "📊 Дашборд":
     st.title("Финансовый отчет")
     if not df.empty:
-        today = date.today()
-        paid_mask = df['Оплачено до'] >= today
+        today_dt = pd.to_datetime(today)
+        
+        # Безопасная маска для фильтрации дат
+        paid_mask = pd.to_datetime(df['Оплачено до'], errors='coerce') >= today_dt
         paid_df = df[paid_mask]
         unpaid_df = df[~paid_mask]
         
-        collected_money = paid_df['Сумма'].sum()
-        remaining_money = unpaid_df['Сумма'].sum()
+        # Метрики переименованы для прозрачности логики
+        active_subscriptions_value = paid_df['Сумма'].sum()
+        debt_value = unpaid_df['Сумма'].sum()
         
-        director_share = collected_money * PERCENT_DIR
-        coach_income = collected_money - director_share
+        director_share = active_subscriptions_value * PERCENT_DIR
+        coach_income = active_subscriptions_value - director_share
 
         c1, c2, c3 = st.columns(3)
         with c1:
-            delta_val = f"-{int(remaining_money)} ₽ (долг)" if remaining_money > 0 else "Долгов нет"
-            st.metric("Собрано (всего)", f"{int(collected_money)} ₽", delta=delta_val, delta_color="normal")
+            delta_val = f"-{int(debt_value)} ₽ (долг)" if debt_value > 0 else "Долгов нет"
+            # Название метрики изменено, чтобы не путать с "собранными за месяц деньгами"
+            st.metric("Объем активных абонементов", f"{int(active_subscriptions_value)} ₽", delta=delta_val, delta_color="normal")
         with c2:
-            st.metric("Доля директора (40%)", f"{int(director_share)} ₽")
+            st.metric("Доля клуба (40%)", f"{int(director_share)} ₽")
         with c3:
             st.metric("Ваша чистая ЗП", f"{int(coach_income)} ₽")
 
         st.divider()
         search = st.text_input("🔍 Поиск по имени", placeholder="Введите имя...")
         view_df = df.copy()
-        view_df = view_df.sort_values(by='Оплачено до', ascending=True)
+        
+        # Безопасная сортировка по дате (позволяет избежать ошибок с NaT)
+        view_df['Оплачено до (сортировка)'] = pd.to_datetime(view_df['Оплачено до'], errors='coerce')
+        view_df = view_df.sort_values(by='Оплачено до (сортировка)', ascending=True).drop(columns=['Оплачено до (сортировка)'])
+        
         if search:
             view_df = view_df[view_df['Имя ученика'].astype(str).str.contains(search, case=False, na=False)]
         
         view_df.index = range(1, len(view_df) + 1)
         
+        # Безопасная функция подсветки строк (проверка на пустые значения)
         def style_rows(row):
-            is_debt = pd.isna(row['Оплачено до']) or row['Оплачено до'] < today
+            val = row['Оплачено до']
+            is_debt = pd.isna(val) or (isinstance(val, date) and val < today)
             return ['background-color: rgba(248, 113, 113, 0.15); color: #fca5a5' if is_debt else '' for _ in row]
 
         st.dataframe(view_df.style.apply(style_rows, axis=1), use_container_width=True)
     else:
-        st.info("База пуста. Если ты загружал данные раньше, нажми 'Восстановить из файла' слева.")
+        # Заглушка, если база пустая
+        st.info("ℹ️ База пуста. Добавьте учеников во вкладке 'Регистрация' или восстановите из файла в меню слева.")
 
 elif page == "➕ Регистрация":
     st.title("Новый ученик")
@@ -135,7 +161,7 @@ elif page == "➕ Регистрация":
             parent = st.text_input("Родитель")
         with col2:
             phone = st.text_input("Телефон")
-            paid = st.date_input("Оплачено до", value=get_end_of_month(date.today()))
+            paid = st.date_input("Оплачено до", value=get_end_of_month(today))
             price = st.number_input("Стоимость абонемента (₽)", min_value=0, value=DEFAULT_PRICE, step=100)
         
         if st.form_submit_button("СОХРАНИТЬ"):
@@ -156,23 +182,33 @@ elif page == "➕ Регистрация":
 elif page == "⚙️ Оплата":
     st.title("Управление")
     if not df.empty:
-        student = st.selectbox("Выберите ученика", sorted(df['Имя ученика'].unique()))
-        row = df[df['Имя ученика'] == student].iloc[0]
-        col1, col2 = st.columns(2)
-        with col1:
-            new_paid = st.date_input("Продлить оплату до", value=get_end_of_month(date.today()))
-        with col2:
-            new_price = st.number_input("Стоимость", min_value=0, value=int(row['Сумма']))
+        # Безопасная загрузка списка учеников (исключаем пустые имена)
+        student_list = sorted(df['Имя ученика'].dropna().unique())
+        student = st.selectbox("Выберите ученика", student_list)
         
-        if st.button("✅ Подтвердить оплату"):
-            idx = df[df['Имя ученика'] == student].index[0]
-            df.at[idx, 'Оплачено до'] = new_paid
-            df.at[idx, 'Сумма'] = int(new_price)
-            save_data(df)
-            st.success(f"Обновлено! Скачай базу для сохранения.")
-            st.rerun()
-        
-        if st.button("🗑 Удалить ученика"):
-            df = df[df['Имя ученика'] != student]
-            save_data(df)
-            st.rerun()
+        if student:
+            row = df[df['Имя ученика'] == student].iloc[0]
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                new_paid = st.date_input("Продлить оплату до", value=get_end_of_month(today))
+            with col2:
+                new_price = st.number_input("Стоимость", min_value=0, value=int(row['Сумма']))
+            
+            if st.button("✅ Подтвердить оплату"):
+                idx = df[df['Имя ученика'] == student].index[0]
+                df.at[idx, 'Оплачено до'] = new_paid
+                df.at[idx, 'Сумма'] = int(new_price)
+                save_data(df)
+                st.success(f"Обновлено! Скачай базу для сохранения.")
+                st.rerun()
+            
+            st.divider()
+            if st.button("🗑 Удалить ученика"):
+                df = df[df['Имя ученика'] != student]
+                save_data(df)
+                st.success(f"Ученик удален.")
+                st.rerun()
+    else:
+        # Заглушка, если база пустая
+        st.info("ℹ️ База пуста. Добавьте учеников во вкладке 'Регистрация'.")

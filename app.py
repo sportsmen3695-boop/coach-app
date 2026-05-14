@@ -72,7 +72,7 @@ with st.sidebar:
         )
     
     # 2. Кнопка загрузки (с проверкой структуры!)
-    uploaded_file = st.file_uploader("📤 Восстановить из файла", type=["csv", "txt"])
+    uploaded_file = st.file_uploader("📤 Восстановить из файла", type=None)
     if uploaded_file is not None:
         try:
             new_df = pd.read_csv(uploaded_file)

@@ -145,6 +145,41 @@ def log_payment(student: str, pay_type: str, desc: str, amount: int) -> None:
     save_payments(pd.concat([payments, new], ignore_index=True))
 
 
+def update_payment_row(row_idx: int, dt, student: str, pay_type: str, desc: str, amount: int) -> bool:
+    payments = load_payments()
+    if payments.empty or row_idx not in payments.index:
+        return False
+    payments.at[row_idx, 'Дата'] = pd.Timestamp(dt).strftime('%Y-%m-%d')
+    payments.at[row_idx, 'Имя ученика'] = student.strip()
+    payments.at[row_idx, 'Тип'] = pay_type
+    payments.at[row_idx, 'Описание'] = desc.strip()
+    payments.at[row_idx, 'Сумма'] = int(amount)
+    save_payments(payments[PAYMENT_COLUMNS])
+    return True
+
+
+def delete_payment_row(row_idx: int) -> bool:
+    payments = load_payments()
+    if payments.empty or row_idx not in payments.index:
+        return False
+    save_payments(payments.drop(index=row_idx).reset_index(drop=True))
+    return True
+
+
+def apply_visit_correction(
+    df: pd.DataFrame, idx, new_visits: list[str], adjust_balance: bool,
+) -> tuple[int, int]:
+    """Возвращает (добавлено дат, убрано дат) для разовых при adjust_balance."""
+    old_visits = set(parse_visits(df.at[idx, 'Посещения']))
+    new_set = {v for v in new_visits if v.strip()}
+    added = len(new_set - old_visits)
+    removed = len(old_visits - new_set)
+    df.at[idx, 'Посещения'] = visits_to_str(sorted(new_set))
+    if adjust_balance and df.at[idx, 'Тип оплаты'] == 'Разовая':
+        df.at[idx, 'Баланс занятий'] = int(df.at[idx, 'Баланс занятий']) + removed - added
+    return added, removed
+
+
 def visits_to_dataframe(students: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for _, r in students.iterrows():
@@ -440,41 +475,93 @@ if page == "📊 Дашборд":
 elif page == "📅 Посещаемость":
     st.title("Журнал тренировок")
     if not df.empty:
-        target_date = st.date_input("📆 Дата тренировки", value=today)
-        tds = target_date.strftime("%Y-%m-%d")
-        already = [r['Имя ученика'] for _, r in df.iterrows() if tds in parse_visits(r['Посещения'])]
-        st.markdown(f"Отмечено **{len(already)}** из **{len(df)}** за {tds}")
-        student_list = sorted(df['Имя ученика'].dropna().unique())
-        force_debt_mode = st.checkbox(
-            "💳 Разрешить запись в долг (для разовых с балансом 0)", value=False,
-        )
-        selected = st.multiselect("✅ Присутствующие:", student_list, default=already)
-        if st.button("💾 Сохранить посещаемость", type="primary"):
-            blocked = []
-            for idx in df.index:
-                name = df.at[idx, 'Имя ученика']
-                ptype = df.at[idx, 'Тип оплаты']
-                visits = parse_visits(df.at[idx, 'Посещения'])
-                is_sel = name in selected
-                was_here = tds in visits
-                if is_sel and not was_here:
-                    if ptype == 'Разовая':
-                        b = int(df.at[idx, 'Баланс занятий'])
-                        if b <= 0 and not force_debt_mode:
-                            blocked.append(name)
-                            continue
-                        df.at[idx, 'Баланс занятий'] = b - 1
-                    visits.append(tds)
-                elif not is_sel and was_here:
-                    visits.remove(tds)
-                    if ptype == 'Разовая':
-                        df.at[idx, 'Баланс занятий'] = int(df.at[idx, 'Баланс занятий']) + 1
-                df.at[idx, 'Посещения'] = visits_to_str(visits)
-            save_data(df)
-            if blocked:
-                st.warning(f"⛔ Не добавлены: {', '.join(blocked)}")
-            st.success(f"✅ Посещаемость за {tds} сохранена!")
-            st.rerun()
+        student_list = sorted(df['Имя ученика'].dropna().unique().tolist())
+        tab_mark, tab_vis_edit = st.tabs(["📆 Отметка за день", "✏️ Корректировка посещений"])
+
+        with tab_mark:
+            target_date = st.date_input("📆 Дата тренировки", value=today, key="att_mark_date")
+            tds = target_date.strftime("%Y-%m-%d")
+            already = [r['Имя ученика'] for _, r in df.iterrows() if tds in parse_visits(r['Посещения'])]
+            st.markdown(f"Отмечено **{len(already)}** из **{len(df)}** за {tds}")
+            force_debt_mode = st.checkbox(
+                "💳 Разрешить запись в долг (для разовых с балансом 0)",
+                value=False, key="att_force_debt",
+            )
+            selected = st.multiselect(
+                "✅ Присутствующие:", student_list, default=already, key="att_multiselect",
+            )
+            if st.button("💾 Сохранить посещаемость", type="primary", key="att_save_day"):
+                blocked = []
+                for idx in df.index:
+                    name = df.at[idx, 'Имя ученика']
+                    ptype = df.at[idx, 'Тип оплаты']
+                    visits = parse_visits(df.at[idx, 'Посещения'])
+                    is_sel = name in selected
+                    was_here = tds in visits
+                    if is_sel and not was_here:
+                        if ptype == 'Разовая':
+                            b = int(df.at[idx, 'Баланс занятий'])
+                            if b <= 0 and not force_debt_mode:
+                                blocked.append(name)
+                                continue
+                            df.at[idx, 'Баланс занятий'] = b - 1
+                        visits.append(tds)
+                    elif not is_sel and was_here:
+                        visits.remove(tds)
+                        if ptype == 'Разовая':
+                            df.at[idx, 'Баланс занятий'] = int(df.at[idx, 'Баланс занятий']) + 1
+                    df.at[idx, 'Посещения'] = visits_to_str(visits)
+                save_data(df)
+                if blocked:
+                    st.warning(f"⛔ Не добавлены: {', '.join(blocked)}")
+                st.success(f"✅ Посещаемость за {tds} сохранена!")
+                st.rerun()
+
+        with tab_vis_edit:
+            st.caption("Ручное редактирование списка дат посещений ученика.")
+            v_student = st.selectbox("👤 Ученик", student_list, key="vis_edit_student")
+            if v_student:
+                v_idx = df[df['Имя ученика'] == v_student].index[0]
+                v_row = df.loc[v_idx]
+                v_type = v_row['Тип оплаты']
+                cur_visits = parse_visits(v_row['Посещения'])
+                st.info(
+                    f"Тип: **{v_type}** | сейчас посещений: **{len(cur_visits)}**"
+                    + (f" | баланс: **{int(v_row['Баланс занятий'])}**" if v_type == 'Разовая' else '')
+                )
+                all_opts = sorted(set(cur_visits))
+                edited_visits = st.multiselect(
+                    "Даты посещений (снимите галочку, чтобы удалить):",
+                    options=all_opts if all_opts else [today.strftime("%Y-%m-%d")],
+                    default=cur_visits,
+                    key=f"vis_edit_ms_{v_idx}",
+                )
+                extra_date = st.date_input("➕ Добавить дату", value=today, key=f"vis_edit_add_{v_idx}")
+                include_extra = st.checkbox(
+                    f"Добавить {extra_date.strftime('%Y-%m-%d')} при сохранении",
+                    value=False, key=f"vis_edit_inc_{v_idx}",
+                )
+                adjust_bal = False
+                if v_type == 'Разовая':
+                    adjust_bal = st.checkbox(
+                        "Синхронизировать баланс (−1 за новую дату, +1 за удалённую)",
+                        value=True, key=f"vis_edit_adj_{v_idx}",
+                    )
+                if st.button("💾 Сохранить корректировку посещений", type="primary", key=f"vis_edit_save_{v_idx}"):
+                    final_visits = list(edited_visits)
+                    if include_extra:
+                        ds = extra_date.strftime("%Y-%m-%d")
+                        if ds not in final_visits:
+                            final_visits.append(ds)
+                    added, removed = apply_visit_correction(df, v_idx, final_visits, adjust_bal)
+                    save_data(df)
+                    msg = f"✅ Сохранено: {len(final_visits)} дат."
+                    if v_type == 'Разовая' and adjust_bal and (added or removed):
+                        msg += f" Баланс: +{removed} / −{added} занятий."
+                    st.success(msg)
+                    st.rerun()
+
+        st.divider()
         month_ru = MONTHS_RU[today.month]
         st.subheader(f"📊 Статистика: {month_ru} {today.year}")
         mp = today.strftime("%Y-%m")
@@ -516,13 +603,96 @@ elif page == "📋 История оплат":
     st.title("История платежей")
     payments = load_payments()
     if not payments.empty:
+        payments = payments.reset_index(drop=True)
         payments['Дата'] = pd.to_datetime(payments['Дата'], errors='coerce')
-        vp = payments.sort_values('Дата', ascending=False)
-        total = int(vp['Сумма'].fillna(0).sum())
-        st.metric("Всего в логе", f"{total:,} ₽")
-        dp = vp.copy()
-        dp['Дата'] = dp['Дата'].dt.strftime('%Y-%m-%d')
-        st.dataframe(dp, use_container_width=True)
+
+        tab_pay_view, tab_pay_edit = st.tabs(["📋 Журнал", "✏️ Корректировка"])
+
+        with tab_pay_view:
+            f1, f2, f3 = st.columns(3)
+            with f1:
+                fn = st.text_input("🔍 Ученик", placeholder="Поиск...", key="hist_fn")
+            with f2:
+                ft = st.selectbox(
+                    "Тип", ["Все", "Абонемент", "Разовая", "Корректировка"], key="hist_ft",
+                )
+            with f3:
+                fp = st.selectbox(
+                    "Период",
+                    ["Все время", "Этот месяц", "Прошлый месяц", "Последние 30 дней"],
+                    key="hist_fp",
+                )
+            vp = payments.copy()
+            if fn.strip():
+                vp = vp[vp['Имя ученика'].astype(str).str.contains(fn.strip(), case=False, na=False)]
+            if ft != "Все":
+                vp = vp[vp['Тип'] == ft]
+            if fp == "Этот месяц":
+                vp = vp[(vp['Дата'].dt.year == today.year) & (vp['Дата'].dt.month == today.month)]
+            elif fp == "Прошлый месяц":
+                lm = today.replace(day=1) - timedelta(days=1)
+                vp = vp[(vp['Дата'].dt.year == lm.year) & (vp['Дата'].dt.month == lm.month)]
+            elif fp == "Последние 30 дней":
+                vp = vp[vp['Дата'] >= pd.Timestamp(today - timedelta(days=30))]
+            vp = vp.sort_values('Дата', ascending=False)
+            m1, m2 = st.columns(2)
+            m1.metric("Платежей за период", len(vp))
+            m2.metric("Сумма за период", f"{int(vp['Сумма'].fillna(0).sum()):,} ₽")
+            dp = vp[PAYMENT_COLUMNS].copy()
+            dp['Дата'] = vp['Дата'].dt.strftime('%Y-%m-%d')
+            dp.index = range(1, len(dp) + 1)
+            st.dataframe(dp, use_container_width=True)
+
+        with tab_pay_edit:
+            st.caption("Изменение или удаление записи из журнала оплат.")
+
+            def _pay_label(i: int) -> str:
+                r = payments.loc[i]
+                d = r['Дата']
+                d_str = d.strftime('%Y-%m-%d') if pd.notna(d) else '—'
+                return f"#{i + 1} | {d_str} | {r['Имя ученика']} | {r['Тип']} | {int(r['Сумма']):,} ₽"
+
+            pay_indices = list(payments.index)
+            pick_i = st.selectbox(
+                "Выберите запись",
+                pay_indices,
+                format_func=_pay_label,
+                key="hist_edit_pick",
+            )
+            pr = payments.loc[pick_i]
+            pr_date = pr['Дата'].date() if pd.notna(pr['Дата']) else today
+            ec1, ec2 = st.columns(2)
+            with ec1:
+                e_date = st.date_input("Дата", value=pr_date, key="hist_edit_date")
+                e_student = st.text_input("Имя ученика", value=str(pr['Имя ученика']), key="hist_edit_name")
+                _pay_types = ["Абонемент", "Разовая", "Корректировка"]
+                _cur_type = str(pr['Тип'])
+                e_type = st.selectbox(
+                    "Тип",
+                    _pay_types,
+                    index=_pay_types.index(_cur_type) if _cur_type in _pay_types else 2,
+                    key="hist_edit_type",
+                )
+            with ec2:
+                e_desc = st.text_area("Описание", value=str(pr['Описание']), key="hist_edit_desc")
+                e_sum = st.number_input(
+                    "Сумма (₽)", min_value=0, value=int(pr['Сумма']), step=50, key="hist_edit_sum",
+                )
+            bc1, bc2 = st.columns(2)
+            with bc1:
+                if st.button("💾 Сохранить изменения", type="primary", key="hist_edit_save"):
+                    if not e_student.strip():
+                        st.error("❌ Укажите имя ученика.")
+                    elif update_payment_row(
+                        pick_i, e_date, e_student.strip(), e_type, e_desc, int(e_sum),
+                    ):
+                        st.success("✅ Запись обновлена!")
+                        st.rerun()
+            with bc2:
+                if st.button("🗑 Удалить запись", key="hist_edit_del"):
+                    if delete_payment_row(pick_i):
+                        st.success("✅ Запись удалена!")
+                        st.rerun()
     else:
         st.info("ℹ️ История пуста.")
 

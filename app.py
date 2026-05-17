@@ -424,7 +424,16 @@ if page == "📊 Дашборд":
         if search.strip():
             view = view[view['Имя ученика'].astype(str).str.contains(search.strip(), case=False, na=False)]
         view.index = range(1, len(view) + 1)
-        st.dataframe(view, use_container_width=True)
+
+        def _style(row):
+            st_txt = str(row.get('Статус', ''))
+            if any(x in st_txt for x in ('❌', 'Долг', 'Просрочен', 'Не оплачен')):
+                return ['background:rgba(239,68,68,.12);color:#fca5a5'] * len(row)
+            if st_txt == '✅ 1 занятий' or 'Истекает' in st_txt or st_txt == '⚠️ Закончились':
+                return ['background:rgba(234,179,8,.1);color:#fde68a'] * len(row)
+            return [''] * len(row)
+
+        st.dataframe(view.style.apply(_style, axis=1), use_container_width=True)
     else:
         st.info("ℹ️ База пуста. Зарегистрируйте первого ученика.")
 
@@ -481,7 +490,25 @@ elif page == "📅 Посещаемость":
                 'Баланс': int(r['Баланс занятий']) if r['Тип оплаты'] == 'Разовая' else '—',
             })
         if stats_rows:
-            st.dataframe(pd.DataFrame(stats_rows), use_container_width=True)
+            sdf = pd.DataFrame(stats_rows)
+
+            def _stats_style(row):
+                bal = row.get('Баланс')
+                if bal == '—':
+                    return [''] * len(row)
+                try:
+                    b = int(bal)
+                except (TypeError, ValueError):
+                    return [''] * len(row)
+                if b < 0:
+                    return ['background:rgba(239,68,68,.12);color:#fca5a5'] * len(row)
+                if b == 1:
+                    return ['background:rgba(234,179,8,.1);color:#fde68a'] * len(row)
+                if b == 0:
+                    return ['background:rgba(234,179,8,.08);color:#fde68a'] * len(row)
+                return [''] * len(row)
+
+            st.dataframe(sdf.style.apply(_stats_style, axis=1), use_container_width=True)
     else:
         st.info("ℹ️ База пуста.")
 
@@ -517,7 +544,7 @@ elif page == "➕ Регистрация":
                 balance = 0
             else:
                 paid = None
-                balance = st.number_input("Количество занятий", min_value=1, value=4, step=1)
+                balance = st.number_input("Количество занятий", min_value=1, value=1, step=1)
                 price = int(balance) * PRICE_PER_SESSION
         if st.form_submit_button("✅ СОХРАНИТЬ", use_container_width=True):
             name_clean = name.strip()
@@ -546,21 +573,26 @@ elif page == "⚙️ Оплата":
     st.title("Управление и оплата")
     if not df.empty:
         student_list = sorted(df['Имя ученика'].dropna().unique().tolist())
-        student = st.selectbox("👤 Выберите ученика", student_list)
+        student = st.selectbox("👤 Выберите ученика", student_list, key="pay_pick_student")
         if student:
             idx = df[df['Имя ученика'] == student].index[0]
             row = df.loc[idx]
             current_type = row['Тип оплаты']
+            sk = str(idx)
             st.markdown(f"**{student}** — тип: **{current_type}** | всего оплачено: **{int(row['Сумма']):,} ₽**")
 
             tab_pay, tab_correct, tab_delete = st.tabs(["💳 Оплата", "✏️ Корректировка", "🗑 Удалить"])
 
             with tab_pay:
                 if current_type == "Абонемент":
-                    new_paid = st.date_input("Продлить до", value=get_end_of_month(today))
+                    new_paid = st.date_input(
+                        "Продлить до", value=get_end_of_month(today), key=f"pay_date_{sk}",
+                    )
                     def_price = int(row['Сумма']) if int(row['Сумма']) > 0 else DEFAULT_PRICE_MONTH
-                    new_price = st.number_input("Сумма (₽)", min_value=0, value=def_price, step=100)
-                    if st.button("✅ Подтвердить оплату абонемента", type="primary"):
+                    new_price = st.number_input(
+                        "Сумма (₽)", min_value=0, value=def_price, step=100, key=f"pay_sum_{sk}",
+                    )
+                    if st.button("✅ Подтвердить оплату абонемента", type="primary", key=f"pay_btn_ab_{sk}"):
                         df.at[idx, 'Оплачено до'] = new_paid
                         df.at[idx, 'Сумма'] = int(new_price)
                         save_data(df)
@@ -570,12 +602,14 @@ elif page == "⚙️ Оплата":
                 else:
                     cur_bal = int(row['Баланс занятий'])
                     cur_total = int(row['Сумма'])
-                    add = st.number_input("Добавить занятий", min_value=1, value=4, step=1)
+                    add = st.number_input(
+                        "Добавить занятий", min_value=1, value=4, step=1, key=f"pay_add_{sk}",
+                    )
                     amt = int(add) * PRICE_PER_SESSION
                     st.metric("К оплате", f"{amt:,} ₽")
                     st.metric("Всего оплачено (после)", f"{cur_total + amt:,} ₽")
                     st.metric("Баланс после", f"{cur_bal + int(add)} занятий")
-                    if st.button("✅ Подтвердить оплату занятий", type="primary"):
+                    if st.button("✅ Подтвердить оплату занятий", type="primary", key=f"pay_btn_sess_{sk}"):
                         df.at[idx, 'Баланс занятий'] = cur_bal + int(add)
                         df.at[idx, 'Сумма'] = cur_total + amt
                         save_data(df)
@@ -586,14 +620,23 @@ elif page == "⚙️ Оплата":
 
             with tab_correct:
                 if current_type == "Абонемент":
-                    corr_date = st.date_input("Оплачено до", value=row['Оплачено до'] or today)
-                    corr_price = st.number_input("Сумма (₽)", min_value=0, value=int(row['Сумма']), step=100)
+                    corr_date = st.date_input(
+                        "Оплачено до", value=row['Оплачено до'] or today, key=f"corr_date_{sk}",
+                    )
+                    corr_price = st.number_input(
+                        "Сумма (₽)", min_value=0, value=int(row['Сумма']), step=100,
+                        key=f"corr_sum_{sk}",
+                    )
                 else:
-                    corr_balance = st.number_input("Баланс занятий", value=int(row['Баланс занятий']), step=1)
+                    corr_balance = st.number_input(
+                        "Баланс занятий", value=int(row['Баланс занятий']), step=1,
+                        key=f"corr_bal_{sk}",
+                    )
                     corr_price = st.number_input(
                         "Всего оплачено (₽)", min_value=0, value=int(row['Сумма']), step=100,
+                        key=f"corr_total_{sk}",
                     )
-                if st.button("💾 Сохранить корректировку"):
+                if st.button("💾 Сохранить корректировку", key=f"corr_btn_{sk}"):
                     df.at[idx, 'Сумма'] = int(corr_price)
                     if current_type == "Абонемент":
                         df.at[idx, 'Оплачено до'] = corr_date
@@ -605,8 +648,8 @@ elif page == "⚙️ Оплата":
                     st.rerun()
 
             with tab_delete:
-                confirm = st.text_input("Введите имя для подтверждения:")
-                if st.button("🗑 Удалить", type="primary"):
+                confirm = st.text_input("Введите имя для подтверждения:", key=f"del_confirm_{sk}")
+                if st.button("🗑 Удалить", type="primary", key=f"del_btn_{sk}"):
                     if confirm.strip().lower() == student.lower():
                         save_data(df[df['Имя ученика'] != student].copy())
                         st.success("✅ Удалён.")

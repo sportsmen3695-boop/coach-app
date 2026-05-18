@@ -75,7 +75,7 @@ def active_value(row, today_dt) -> int:
         return 0
     if row['Тип оплаты'] == 'Абонемент':
         return int(row['Сумма'])
-    return max(0, int(row['Баланс занятий'])) * PRICE_PER_SESSION
+    return max(0, int(row['Сумма']))
 
 
 def debt_value(row, today_dt) -> int:
@@ -403,7 +403,7 @@ if page == "📊 Дашборд":
 
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("💰 Активная база", f"{total_active:,} ₽",
-                  help="Абонементы + стоимость оставшихся разовых занятий")
+                  help="Абонементы + все оплаченные разовые (включая погашённый долг)")
         c2.metric("🏢 Доля клуба 40%", f"{director_share:,} ₽")
         c3.metric("👤 Ваша чистая ЗП", f"{coach_net:,} ₽")
         c4.metric("🔴 Задолженность", f"{int(df['Должник'].sum())} чел.",

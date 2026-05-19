@@ -470,6 +470,68 @@ if page == "📊 Дашборд":
             return [''] * len(row)
 
         st.dataframe(view.style.apply(_style, axis=1), use_container_width=True)
+        st.divider()
+        with st.expander("⚡ Быстрая корректировка", expanded=False):
+            qc_student = st.selectbox(
+                "👤 Ученик", student_list if not df.empty else [], key="qc_student"
+            )
+            if qc_student:
+                qc_idx = df[df['Имя ученика'] == qc_student].index[0]
+                qc_row = df.loc[qc_idx]
+                qc_type = qc_row['Тип оплаты']
+                qc_debt = is_debt(qc_row, today_dt)
+                status_color = "badge-red" if qc_debt else "badge-green"
+                status_text = "🔴 Должник" if qc_debt else "🟢 Активен"
+                st.markdown(
+                    f'<span class="{status_color}">{status_text}</span> | '
+                    f'Тип: **{qc_type}** | Сумма: **{int(qc_row["Сумма"]):,} ₽**'
+                    + (f' | Баланс: **{int(qc_row["Баланс занятий"])} зан.**' if qc_type == 'Разовая' else
+                       f' | Оплачено до: **{qc_row["Оплачено до"]}**'),
+                    unsafe_allow_html=True,
+                )
+                qa, qb = st.columns(2)
+                if qc_type == 'Абонемент':
+                    with qa:
+                        qc_date = st.date_input(
+                            "Продлить до", value=get_end_of_month(today), key="qc_date"
+                        )
+                    with qb:
+                        qc_price = st.number_input(
+                            "Сумма (₽)", min_value=0,
+                            value=int(qc_row['Сумма']) if int(qc_row['Сумма']) > 0 else DEFAULT_PRICE_MONTH,
+                            step=100, key="qc_price",
+                        )
+                    if st.button("✅ Сохранить", type="primary", key="qc_save_ab"):
+                        df.at[qc_idx, 'Оплачено до'] = qc_date
+                        df.at[qc_idx, 'Сумма'] = int(qc_price)
+                        save_data(df)
+                        log_payment(qc_student, 'Абонемент', f"Абонемент до {qc_date}", int(qc_price))
+                        st.success(f"✅ {qc_student} — продлён до {qc_date}")
+                        st.rerun()
+                else:
+                    with qa:
+                        qc_add = st.number_input(
+                            "Добавить занятий", min_value=1, value=4, step=1, key="qc_add"
+                        )
+                    with qb:
+                        qc_amt = int(qc_add) * PRICE_PER_SESSION
+                        st.metric("К оплате", f"{qc_amt:,} ₽")
+                        st.metric(
+                            "Баланс после",
+                            f"{int(qc_row['Баланс занятий']) + int(qc_add)} зан."
+                        )
+                    if st.button("✅ Сохранить", type="primary", key="qc_save_sess"):
+                        new_bal = int(qc_row['Баланс занятий']) + int(qc_add)
+                        new_total = int(qc_row['Сумма']) + qc_amt
+                        df.at[qc_idx, 'Баланс занятий'] = new_bal
+                        df.at[qc_idx, 'Сумма'] = new_total
+                        save_data(df)
+                        log_payment(
+                            qc_student, 'Разовая',
+                            f"Куплено {int(qc_add)} зан. (баланс: {new_bal})", qc_amt,
+                        )
+                        st.success(f"✅ {qc_student} — +{int(qc_add)} занятий, баланс: {new_bal}")
+                        st.rerun()
     else:
         st.info("ℹ️ База пуста. Зарегистрируйте первого ученика.")
 

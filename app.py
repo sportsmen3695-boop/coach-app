@@ -75,7 +75,6 @@ def active_value(row, today_dt) -> int:
         if is_debt(row, today_dt):
             return 0
         return int(row['Сумма'])
-    # Разовая: всегда возвращаем оплаченное, долг считается отдельно
     return max(0, int(row['Сумма']))
 
 
@@ -170,7 +169,6 @@ def delete_payment_row(row_idx: int) -> bool:
 def apply_visit_correction(
     df: pd.DataFrame, idx, new_visits: list[str], adjust_balance: bool,
 ) -> tuple[int, int]:
-    """Возвращает (добавлено дат, убрано дат) для разовых при adjust_balance."""
     old_visits = set(parse_visits(df.at[idx, 'Посещения']))
     new_set = {v for v in new_visits if v.strip()}
     added = len(new_set - old_visits)
@@ -471,121 +469,107 @@ if page == "📊 Дашборд":
 
         st.dataframe(view.style.apply(_style, axis=1), use_container_width=True)
         st.divider()
+
         student_list = sorted(df['Имя ученика'].dropna().unique().tolist())
         with st.expander("⚡ Быстрая корректировка", expanded=False):
-
-    student_list = sorted(df['Имя ученика'].dropna().unique().tolist())
-
-    qc_student = st.selectbox(
-        "👤 Ученик",
-        student_list,
-        key="qc_student"
-    )
-
-    if qc_student:
-        qc_idx = df[df['Имя ученика'] == qc_student].index[0]
-        qc_row = df.loc[qc_idx]
-
-        st.markdown("### ✏️ Редактирование данных")
-
-        c1, c2 = st.columns(2)
-
-        with c1:
-            new_name = st.text_input(
-                "Имя ученика",
-                value=safe_str(qc_row['Имя ученика'], '')
+            qc_student = st.selectbox(
+                "👤 Ученик",
+                student_list,
+                key="qc_student"
             )
 
-            new_birth = st.date_input(
-                "Дата рождения",
-                value=qc_row['Дата рождения']
-                if pd.notna(qc_row['Дата рождения'])
-                else today
-            )
+            if qc_student:
+                qc_idx = df[df['Имя ученика'] == qc_student].index[0]
+                qc_row = df.loc[qc_idx]
 
-            new_parent = st.text_input(
-                "ФИО родителя",
-                value=safe_str(qc_row['ФИО родителя'], '')
-            )
+                st.markdown("### ✏️ Редактирование данных")
 
-            new_phone = st.text_input(
-                "Телефон",
-                value=safe_str(qc_row['Телефон'], '')
-            )
+                c1, c2 = st.columns(2)
 
-        with c2:
+                with c1:
+                    new_name = st.text_input(
+                        "Имя ученика",
+                        value=safe_str(qc_row['Имя ученика'], '')
+                    )
 
-            pay_types = ["Абонемент", "Разовая"]
+                    new_birth = st.date_input(
+                        "Дата рождения",
+                        value=qc_row['Дата рождения']
+                        if pd.notna(qc_row['Дата рождения'])
+                        else today
+                    )
 
-            current_type = qc_row['Тип оплаты']
+                    new_parent = st.text_input(
+                        "ФИО родителя",
+                        value=safe_str(qc_row['ФИО родителя'], '')
+                    )
 
-            new_pay_type = st.selectbox(
-                "Тип оплаты",
-                pay_types,
-                index=pay_types.index(current_type)
-            )
+                    new_phone = st.text_input(
+                        "Телефон",
+                        value=safe_str(qc_row['Телефон'], '')
+                    )
 
-            if new_pay_type == "Абонемент":
+                with c2:
+                    pay_types = ["Абонемент", "Разовая"]
+                    current_type = qc_row['Тип оплаты']
 
-                new_paid = st.date_input(
-                    "Оплачено до",
-                    value=qc_row['Оплачено до']
-                    if pd.notna(qc_row['Оплачено до'])
-                    else today
+                    new_pay_type = st.selectbox(
+                        "Тип оплаты",
+                        pay_types,
+                        index=pay_types.index(current_type)
+                    )
+
+                    if new_pay_type == "Абонемент":
+                        new_paid = st.date_input(
+                            "Оплачено до",
+                            value=qc_row['Оплачено до']
+                            if pd.notna(qc_row['Оплачено до'])
+                            else today
+                        )
+                        new_balance = 0
+                    else:
+                        new_paid = None
+                        new_balance = st.number_input(
+                            "Баланс занятий",
+                            value=int(qc_row['Баланс занятий']),
+                            step=1
+                        )
+
+                    new_sum = st.number_input(
+                        "Сумма",
+                        min_value=0,
+                        value=int(qc_row['Сумма']),
+                        step=100
+                    )
+
+                current_visits = parse_visits(qc_row['Посещения'])
+                new_visits = st.multiselect(
+                    "Посещения",
+                    options=current_visits,
+                    default=current_visits
                 )
 
-                new_balance = 0
+                if st.button("💾 Сохранить изменения", type="primary"):
+                    df.at[qc_idx, 'Имя ученика'] = new_name.strip()
+                    df.at[qc_idx, 'Дата рождения'] = new_birth
+                    df.at[qc_idx, 'ФИО родителя'] = new_parent.strip()
+                    df.at[qc_idx, 'Телефон'] = new_phone.strip()
+                    df.at[qc_idx, 'Тип оплаты'] = new_pay_type
+                    df.at[qc_idx, 'Оплачено до'] = new_paid
+                    df.at[qc_idx, 'Баланс занятий'] = int(new_balance)
+                    df.at[qc_idx, 'Сумма'] = int(new_sum)
+                    df.at[qc_idx, 'Посещения'] = visits_to_str(new_visits)
 
-            else:
+                    save_data(df)
+                    log_payment(
+                        new_name,
+                        'Корректировка',
+                        'Быстрая правка через дашборд',
+                        0
+                    )
 
-                new_paid = None
-
-                new_balance = st.number_input(
-                    "Баланс занятий",
-                    value=int(qc_row['Баланс занятий']),
-                    step=1
-                )
-
-            new_sum = st.number_input(
-                "Сумма",
-                min_value=0,
-                value=int(qc_row['Сумма']),
-                step=100
-            )
-
-        current_visits = parse_visits(qc_row['Посещения'])
-
-        new_visits = st.multiselect(
-            "Посещения",
-            options=current_visits,
-            default=current_visits
-        )
-
-        if st.button("💾 Сохранить изменения", type="primary"):
-
-            df.at[qc_idx, 'Имя ученика'] = new_name.strip()
-            df.at[qc_idx, 'Дата рождения'] = new_birth
-            df.at[qc_idx, 'ФИО родителя'] = new_parent.strip()
-            df.at[qc_idx, 'Телефон'] = new_phone.strip()
-
-            df.at[qc_idx, 'Тип оплаты'] = new_pay_type
-            df.at[qc_idx, 'Оплачено до'] = new_paid
-            df.at[qc_idx, 'Баланс занятий'] = int(new_balance)
-            df.at[qc_idx, 'Сумма'] = int(new_sum)
-
-            df.at[qc_idx, 'Посещения'] = visits_to_str(new_visits)
-
-            save_data(df)
-
-            log_payment(
-                new_name,
-                'Корректировка',
-                'Быстрая правка через дашборд',
-                0
-            )
-
-            st.success("✅ Данные обновлены!")
-            st.rerun()
+                    st.success("✅ Данные обновлены!")
+                    st.rerun()
     else:
         st.info("ℹ️ База пуста. Зарегистрируйте первого ученика.")
 

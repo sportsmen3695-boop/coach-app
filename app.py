@@ -471,6 +471,7 @@ if page == "📊 Дашборд":
 
         st.dataframe(view.style.apply(_style, axis=1), use_container_width=True)
         st.divider()
+        student_list = sorted(df['Имя ученика'].dropna().unique().tolist())
         with st.expander("⚡ Быстрая корректировка", expanded=False):
             qc_student = st.selectbox(
                 "👤 Ученик", student_list if not df.empty else [], key="qc_student"

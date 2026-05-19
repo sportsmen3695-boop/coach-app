@@ -473,66 +473,119 @@ if page == "📊 Дашборд":
         st.divider()
         student_list = sorted(df['Имя ученика'].dropna().unique().tolist())
         with st.expander("⚡ Быстрая корректировка", expanded=False):
-            qc_student = st.selectbox(
-                "👤 Ученик", student_list if not df.empty else [], key="qc_student"
+
+    student_list = sorted(df['Имя ученика'].dropna().unique().tolist())
+
+    qc_student = st.selectbox(
+        "👤 Ученик",
+        student_list,
+        key="qc_student"
+    )
+
+    if qc_student:
+        qc_idx = df[df['Имя ученика'] == qc_student].index[0]
+        qc_row = df.loc[qc_idx]
+
+        st.markdown("### ✏️ Редактирование данных")
+
+        c1, c2 = st.columns(2)
+
+        with c1:
+            new_name = st.text_input(
+                "Имя ученика",
+                value=safe_str(qc_row['Имя ученика'], '')
             )
-            if qc_student:
-                qc_idx = df[df['Имя ученика'] == qc_student].index[0]
-                qc_row = df.loc[qc_idx]
-                qc_type = qc_row['Тип оплаты']
-                qc_debt = is_debt(qc_row, today_dt)
-                status_color = "badge-red" if qc_debt else "badge-green"
-                status_text = "🔴 Должник" if qc_debt else "🟢 Активен"
-                st.markdown(
-                    f'<span class="{status_color}">{status_text}</span> | '
-                    f'Тип: **{qc_type}** | Сумма: **{int(qc_row["Сумма"]):,} ₽**'
-                    + (f' | Баланс: **{int(qc_row["Баланс занятий"])} зан.**' if qc_type == 'Разовая' else
-                       f' | Оплачено до: **{qc_row["Оплачено до"]}**'),
-                    unsafe_allow_html=True,
+
+            new_birth = st.date_input(
+                "Дата рождения",
+                value=qc_row['Дата рождения']
+                if pd.notna(qc_row['Дата рождения'])
+                else today
+            )
+
+            new_parent = st.text_input(
+                "ФИО родителя",
+                value=safe_str(qc_row['ФИО родителя'], '')
+            )
+
+            new_phone = st.text_input(
+                "Телефон",
+                value=safe_str(qc_row['Телефон'], '')
+            )
+
+        with c2:
+
+            pay_types = ["Абонемент", "Разовая"]
+
+            current_type = qc_row['Тип оплаты']
+
+            new_pay_type = st.selectbox(
+                "Тип оплаты",
+                pay_types,
+                index=pay_types.index(current_type)
+            )
+
+            if new_pay_type == "Абонемент":
+
+                new_paid = st.date_input(
+                    "Оплачено до",
+                    value=qc_row['Оплачено до']
+                    if pd.notna(qc_row['Оплачено до'])
+                    else today
                 )
-                qa, qb = st.columns(2)
-                if qc_type == 'Абонемент':
-                    with qa:
-                        qc_date = st.date_input(
-                            "Продлить до", value=get_end_of_month(today), key="qc_date"
-                        )
-                    with qb:
-                        qc_price = st.number_input(
-                            "Сумма (₽)", min_value=0,
-                            value=int(qc_row['Сумма']) if int(qc_row['Сумма']) > 0 else DEFAULT_PRICE_MONTH,
-                            step=100, key="qc_price",
-                        )
-                    if st.button("✅ Сохранить", type="primary", key="qc_save_ab"):
-                        df.at[qc_idx, 'Оплачено до'] = qc_date
-                        df.at[qc_idx, 'Сумма'] = int(qc_price)
-                        save_data(df)
-                        log_payment(qc_student, 'Абонемент', f"Абонемент до {qc_date}", int(qc_price))
-                        st.success(f"✅ {qc_student} — продлён до {qc_date}")
-                        st.rerun()
-                else:
-                    with qa:
-                        qc_add = st.number_input(
-                            "Добавить занятий", min_value=1, value=4, step=1, key="qc_add"
-                        )
-                    with qb:
-                        qc_amt = int(qc_add) * PRICE_PER_SESSION
-                        st.metric("К оплате", f"{qc_amt:,} ₽")
-                        st.metric(
-                            "Баланс после",
-                            f"{int(qc_row['Баланс занятий']) + int(qc_add)} зан."
-                        )
-                    if st.button("✅ Сохранить", type="primary", key="qc_save_sess"):
-                        new_bal = int(qc_row['Баланс занятий']) + int(qc_add)
-                        new_total = int(qc_row['Сумма']) + qc_amt
-                        df.at[qc_idx, 'Баланс занятий'] = new_bal
-                        df.at[qc_idx, 'Сумма'] = new_total
-                        save_data(df)
-                        log_payment(
-                            qc_student, 'Разовая',
-                            f"Куплено {int(qc_add)} зан. (баланс: {new_bal})", qc_amt,
-                        )
-                        st.success(f"✅ {qc_student} — +{int(qc_add)} занятий, баланс: {new_bal}")
-                        st.rerun()
+
+                new_balance = 0
+
+            else:
+
+                new_paid = None
+
+                new_balance = st.number_input(
+                    "Баланс занятий",
+                    value=int(qc_row['Баланс занятий']),
+                    step=1
+                )
+
+            new_sum = st.number_input(
+                "Сумма",
+                min_value=0,
+                value=int(qc_row['Сумма']),
+                step=100
+            )
+
+        current_visits = parse_visits(qc_row['Посещения'])
+
+        new_visits = st.multiselect(
+            "Посещения",
+            options=current_visits,
+            default=current_visits
+        )
+
+        if st.button("💾 Сохранить изменения", type="primary"):
+
+            df.at[qc_idx, 'Имя ученика'] = new_name.strip()
+            df.at[qc_idx, 'Дата рождения'] = new_birth
+            df.at[qc_idx, 'ФИО родителя'] = new_parent.strip()
+            df.at[qc_idx, 'Телефон'] = new_phone.strip()
+
+            df.at[qc_idx, 'Тип оплаты'] = new_pay_type
+            df.at[qc_idx, 'Оплачено до'] = new_paid
+            df.at[qc_idx, 'Баланс занятий'] = int(new_balance)
+            df.at[qc_idx, 'Сумма'] = int(new_sum)
+
+            df.at[qc_idx, 'Посещения'] = visits_to_str(new_visits)
+
+            save_data(df)
+
+            log_payment(
+                new_name,
+                'Корректировка',
+                'Быстрая правка через дашборд',
+                0
+            )
+
+            st.success("✅ Данные обновлены!")
+            st.rerun()
     else:
         st.info("ℹ️ База пуста. Зарегистрируйте первого ученика.")
 

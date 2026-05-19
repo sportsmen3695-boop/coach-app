@@ -71,10 +71,11 @@ def is_debt(row, today_dt) -> bool:
 
 
 def active_value(row, today_dt) -> int:
-    if is_debt(row, today_dt):
-        return 0
     if row['Тип оплаты'] == 'Абонемент':
+        if is_debt(row, today_dt):
+            return 0
         return int(row['Сумма'])
+    # Разовая: всегда возвращаем оплаченное, долг считается отдельно
     return max(0, int(row['Сумма']))
 
 
